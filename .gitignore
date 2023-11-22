@@ -1,3 +1,4 @@
 zig-cache
 zig-out
-samples/hello
+samples/*
+!samples/*.bf
