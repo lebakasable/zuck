@@ -4,6 +4,7 @@ const clap = @import("clap");
 
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
+const ChildProcess = std.ChildProcess;
 
 const Token = enum {
     add,
@@ -136,7 +137,7 @@ pub fn main() !void {
         const bin_file_path = file_path[0..ext_index];
 
         {
-            var child = std.ChildProcess.init(&.{
+            var child = ChildProcess.init(&.{
                 "gcc",
                 "-O3",
                 "-o",
@@ -147,12 +148,12 @@ pub fn main() !void {
         }
 
         if (res.args.debug == 0) {
-            var child = std.ChildProcess.init(&.{ "rm", c_file_path }, allocator);
+            var child = ChildProcess.init(&.{ "rm", c_file_path }, allocator);
             _ = try child.spawnAndWait();
         }
 
         if (res.args.run != 0) {
-            var child = std.ChildProcess.init(&.{bin_file_path}, allocator);
+            var child = ChildProcess.init(&.{bin_file_path}, allocator);
             _ = try child.spawnAndWait();
         }
     }
