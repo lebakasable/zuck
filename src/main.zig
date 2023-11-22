@@ -1,5 +1,7 @@
 const std = @import("std");
 const String = @import("String.zig");
+const clap = @import("clap");
+
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 
@@ -37,36 +39,20 @@ fn tokenize(allocator: Allocator, input: []const u8) !ArrayList(Token) {
 fn generate(allocator: Allocator, tokens: ArrayList(Token)) !String {
     var output = try String.init_with_contents(allocator,
         \\#include "stdio.h"
-        \\int main(){char tape[20000]={0};char *ptr=tape;
+        \\char tape[20000]={0};char*ptr=tape;int main(){
     );
 
     for (tokens.items) |token| {
-        switch (token) {
-            .add => {
-                try output.concat("++*ptr;");
-            },
-            .sub => {
-                try output.concat("--*ptr;");
-            },
-            .right => {
-                try output.concat("++ptr;");
-            },
-            .left => {
-                try output.concat("--ptr;");
-            },
-            .read => {
-                try output.concat("*ptr=getchar();");
-            },
-            .write => {
-                try output.concat("putchar(*ptr);");
-            },
-            .begin_loop => {
-                try output.concat("while(*ptr){");
-            },
-            .end_loop => {
-                try output.concat("}");
-            },
-        }
+        try output.concat(switch (token) {
+            .add => "++*ptr;",
+            .sub => "--*ptr;",
+            .right => "++ptr;",
+            .left => "--ptr;",
+            .read => "*ptr=getchar();",
+            .write => "putchar(*ptr);",
+            .begin_loop => "while(*ptr){",
+            .end_loop => "}",
+        });
     }
 
     try output.concat("}");
@@ -74,16 +60,99 @@ fn generate(allocator: Allocator, tokens: ArrayList(Token)) !String {
 }
 
 pub fn main() !void {
+    const stdout = std.io.getStdOut().writer();
+    const stderr = std.io.getStdErr().writer();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    const allocator = gpa.allocator();
+    var aa = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer aa.deinit();
 
-    var tokens = try tokenize(allocator, "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.");
-    defer tokens.deinit();
+    const allocator = aa.allocator();
 
-    var generated = try generate(allocator, tokens);
-    defer generated.deinit();
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help   Display the help and exit.
+        \\-d, --debug  Keep the generated C file.
+        \\<file>...    The BrainFuck source file(s) to compile.
+        \\
+    );
 
-    std.debug.print("{s}\n", .{generated.str()});
+    var res = try clap.parse(
+        clap.Help,
+        &params,
+        comptime .{
+            .file = clap.parsers.string,
+        },
+        .{},
+    );
+
+    if (res.args.help != 0) {
+        try stdout.print("Usage: zuck ", .{});
+        return clap.usage(stdout, clap.Help, &params);
+    }
+
+    if (res.positionals.len == 0) {
+        return try stderr.print("error: At least one input file is required", .{});
+    }
+
+    for (res.positionals) |file_path| {
+        var file = try std.fs.cwd().openFile(file_path, .{});
+        defer file.close();
+
+        var contents = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+
+        std.log.info("Tokenizing `{s}`", .{file_path});
+        var tokens = try tokenize(allocator, contents);
+
+        var generated = try generate(allocator, tokens);
+
+        var c_file_path: []const u8 = undefined;
+
+        var ext_index = file_path.len - 1;
+        var ext_found = false;
+        while (ext_index > 0) : (ext_index -= 1) {
+            if (file_path[ext_index] == '.') {
+                c_file_path = try std.mem.concat(allocator, u8, &.{ file_path[0..ext_index], ".c" });
+                ext_found = true;
+                break;
+            }
+        }
+
+        if (!ext_found) {
+            c_file_path = try std.mem.concat(allocator, u8, &.{ file_path, ".c" });
+        }
+
+        std.log.info("Generating `{s}`", .{c_file_path});
+
+        var c_file = try std.fs.cwd().createFile(c_file_path, .{});
+        defer c_file.close();
+
+        try c_file.writeAll(generated.str());
+
+        std.log.info("Compiling `{s}`", .{c_file_path});
+
+        _ = try std.ChildProcess.exec(.{
+            .allocator = allocator,
+            .argv = &.{
+                "gcc",
+                "-O3",
+                "-o",
+                file_path[0..ext_index],
+                c_file_path,
+            },
+        });
+
+        if (res.args.debug == 0) {
+            std.log.info("Cleaning up", .{});
+
+            _ = try std.ChildProcess.exec(.{
+                .allocator = allocator,
+                .argv = &.{
+                    "rm",
+                    c_file_path,
+                },
+            });
+        }
+    }
 }
