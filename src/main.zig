@@ -73,6 +73,7 @@ pub fn main() !void {
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help   Display the help and exit.
+        \\-r, --run    Run the generated binary file.
         \\-d, --debug  Keep the generated C file.
         \\<file>...    The BrainFuck source file(s) to compile.
         \\
@@ -132,27 +133,27 @@ pub fn main() !void {
 
         std.log.info("Compiling `{s}`", .{c_file_path});
 
-        _ = try std.ChildProcess.exec(.{
-            .allocator = allocator,
-            .argv = &.{
+        const bin_file_path = file_path[0..ext_index];
+
+        {
+            var child = std.ChildProcess.init(&.{
                 "gcc",
                 "-O3",
                 "-o",
-                file_path[0..ext_index],
+                bin_file_path,
                 c_file_path,
-            },
-        });
+            }, allocator);
+            _ = try child.spawnAndWait();
+        }
 
         if (res.args.debug == 0) {
-            std.log.info("Cleaning up", .{});
+            var child = std.ChildProcess.init(&.{ "rm", c_file_path }, allocator);
+            _ = try child.spawnAndWait();
+        }
 
-            _ = try std.ChildProcess.exec(.{
-                .allocator = allocator,
-                .argv = &.{
-                    "rm",
-                    c_file_path,
-                },
-            });
+        if (res.args.run != 0) {
+            var child = std.ChildProcess.init(&.{bin_file_path}, allocator);
+            _ = try child.spawnAndWait();
         }
     }
 }
